@@ -138,7 +138,55 @@ def build_router(settings: Settings) -> Router:
             logger.exception("Failed to copy message_id=%s", msg_id)
             await message.reply("Не удалось переслать (см. логи).")
 
-    @router.channel_post()
+    only_source_channel = F.chat.id == settings.source_channel_id
+
+    @router.channel_post(only_source_channel)
+    async def forward_channel_post(message: Message, bot: Bot) -> None:
+        try:
+            await forward_message_with_fallback(
+                bot,
+                from_chat_id=settings.source_channel_id,
+                message_id=message.message_id,
+            )
+            logger.info(
+                "Forwarded post %s from channel %s to chat %s topic %s",
+                message.message_id,
+                settings.source_channel_id,
+                settings.target_chat_id,
+                settings.target_topic_id or "-",
+            )
+        except Exception as e:
+            logger.exception(
+                "Failed to forward post %s from channel %s: %s",
+                message.message_id,
+                settings.source_channel_id,
+                e,
+            )
+
+    @router.edited_channel_post(only_source_channel)
+    async def forward_channel_edit(message: Message, bot: Bot) -> None:
+        try:
+            await forward_message_with_fallback(
+                bot,
+                from_chat_id=settings.source_channel_id,
+                message_id=message.message_id,
+            )
+            logger.info(
+                "Forwarded edited post %s from channel %s to chat %s topic %s",
+                message.message_id,
+                settings.source_channel_id,
+                settings.target_chat_id,
+                settings.target_topic_id or "-",
+            )
+        except Exception as e:
+            logger.exception(
+                "Failed to forward edited post %s from channel %s: %s",
+                message.message_id,
+                settings.source_channel_id,
+                e,
+            )
+
+    @router.channel_post(flags={"block": False})
     async def log_any_channel_post(message: Message) -> None:
         # Диагностический лог: видно, приходят ли события каналов.
         logger.info(
@@ -148,7 +196,7 @@ def build_router(settings: Settings) -> Router:
             message.message_id,
         )
 
-    @router.message()
+    @router.message(flags={"block": False})
     async def log_any_message(message: Message) -> None:
         # Диагностика: видно, приходят ли обычные сообщения (например, /copy).
         logger.info(
@@ -159,70 +207,6 @@ def build_router(settings: Settings) -> Router:
             getattr(message, "message_thread_id", None),
             message.text,
         )
-
-    only_source_channel = F.chat.id == settings.source_channel_id
-
-    @router.channel_post(only_source_channel)
-    async def forward_channel_post(message: Message, bot: Bot) -> None:
-        try:
-            await message.forward(
-                chat_id=settings.target_chat_id,
-                message_thread_id=settings.target_topic_id,
-            )
-            logger.info(
-                "Forwarded post %s from channel %s to chat %s topic %s",
-                message.message_id,
-                settings.source_channel_id,
-                settings.target_chat_id,
-                settings.target_topic_id or "-",
-            )
-        except TelegramBadRequest as e:
-            if "message thread not found" in str(e) and settings.target_topic_id:
-                logger.warning(
-                    "Topic %s not found for auto-forward, retrying without topic. msg_id=%s",
-                    settings.target_topic_id,
-                    message.message_id,
-                )
-                await message.forward(chat_id=settings.target_chat_id)
-                logger.info(
-                    "Forwarded post %s from channel %s to chat %s without topic",
-                    message.message_id,
-                    settings.source_channel_id,
-                    settings.target_chat_id,
-                )
-            else:
-                raise
-
-    @router.edited_channel_post(only_source_channel)
-    async def forward_channel_edit(message: Message, bot: Bot) -> None:
-        try:
-            await message.forward(
-                chat_id=settings.target_chat_id,
-                message_thread_id=settings.target_topic_id,
-            )
-            logger.info(
-                "Forwarded edited post %s from channel %s to chat %s topic %s",
-                message.message_id,
-                settings.source_channel_id,
-                settings.target_chat_id,
-                settings.target_topic_id or "-",
-            )
-        except TelegramBadRequest as e:
-            if "message thread not found" in str(e) and settings.target_topic_id:
-                logger.warning(
-                    "Topic %s not found for auto-forward edit, retrying without topic. msg_id=%s",
-                    settings.target_topic_id,
-                    message.message_id,
-                )
-                await message.forward(chat_id=settings.target_chat_id)
-                logger.info(
-                    "Forwarded edited post %s from channel %s to chat %s without topic",
-                    message.message_id,
-                    settings.source_channel_id,
-                    settings.target_chat_id,
-                )
-            else:
-                raise
 
     return router
 
